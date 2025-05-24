@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Parts Price Calculator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Bootstrap CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    .status { font-weight: bold; margin-top: 10px; }
+    .table-responsive { margin-top: 24px; }
+    .download-btn { margin-right: 10px; }
+    .reset-btn { margin-left: 10px; }
+    .file-label { font-weight: 500; }
+    .margin-bottom { margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+<div class="container py-4">
+  <!-- Printable Header Start -->
+  <div id="print-header" class="d-flex align-items-center justify-content-between mb-3" style="border-bottom:2px solid #0070c0; padding-bottom:10px;">
+    <div class="d-flex align-items-center">
+      <!-- Styled resQ text logo -->
+      <span style="background:#00a9e0; color:#fff; font-size:2.5rem; font-weight:700; padding:6px 24px 6px 18px; border-radius:10px; letter-spacing:1px; display:inline-block; line-height:1;">
+        <span style="font-weight:400;">res</span><span style="font-size:3.2rem; font-weight:900; vertical-align:-6px;">Q</span>
+      </span>
+      <span class="ms-3" style="font-size:1.2rem; font-weight:600;">Apple Authorised Service Provider</span>
+    </div>
+    <div class="text-end" style="min-width:220px;">
+      <div id="revision-no" style="font-size:0.95rem;"></div>
+      <div style="font-size:0.85rem;">Date: <span id="rev-date"></span></div>
+    </div>
+  </div>
+  <!-- Printable Header End -->
+
+  <!-- Remove Parts Price Calculator header from print -->
+  <h2 class="mb-4 d-print-none">Parts Price Calculator</h2>
+  <div class="row g-3 d-print-none">
+    <div class="col-md-6">
+      <label class="form-label file-label">1. Latest Required Parts List</label>
+      <input type="file" class="form-control" id="file1" accept=".xlsx,.xls" />
+    </div>
+    <div class="col-md-6">
+      <label class="form-label file-label">2. Part Master</label>
+      <input type="file" class="form-control" id="file2" accept=".xlsx,.xls" />
+    </div>
+  </div>
+  <div class="row g-3 align-items-end margin-bottom d-print-none">
+    <div class="col-md-4 mt-3">
+      <label class="form-label file-label">3. Customer Type</label>
+      <select class="form-select" id="customerType">
+        <option value="MyG">MyG</option>
+        <option value="AmTrust">AmTrust</option>
+        <option value="OnsiteGo">OnsiteGo</option>
+        <option value="End Customer">End Customer</option>
+      </select>
+    </div>
+    <div class="col-md-4 mt-3">
+      <button class="btn btn-primary" id="processBtn">Process</button>
+      <button class="btn btn-secondary reset-btn" id="resetBtn">Reset</button>
+    </div>
+    <div class="col-md-4 mt-3">
+      <span class="status" id="status"></span>
+    </div>
+  </div>
+  <div id="results"></div>
+</div>
+
+<!-- SheetJS -->
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+<script>
+const marginTable = {
+  "MyG":      { "Others": 0.09, "Battery": 0.15 },
+  "AmTrust":  { "Others": 0.10, "Battery": 0.15 },
+  "OnsiteGo": { "Others": 0.10, "Battery": 0.15 },
+  "End Customer": { "Others": 0.15, "Battery": 0.15 }
+};
+
+let file1Data = [], file2Data = [], mergedData = [];
+let batteryRows = [], othersRows = [];
+
+function showStatus(msg, color="black") {
+  document.getElementById('status').textContent = msg;
+  document.getElementById('status').style.color = color;
+}
+
+function resetAll() {
+  document.getElementById('file1').value = '';
+  document.getElementById('file2').value = '';
+  document.getElementById('customerType').selectedIndex = 0;
+  document.getElementById('results').innerHTML = '';
+  file1Data = [];
+  file2Data = [];
+  mergedData = [];
+  batteryRows = [];
+  othersRows = [];
+  showStatus('');
+}
+
+document.getElementById('resetBtn').onclick = resetAll;
+
+document.getElementById('processBtn').onclick = async function() {
+  resetTables();
+  const file1 = document.getElementById('file1').files[0];
+  const file2 = document.getElementById('file2').files[0];
+  if (!file1 || !file2) {
+    showStatus('Please upload both files.', 'red');
+    return;
+  }
+  if (!/\.xlsx?$/.test(file1.name) || !/\.xlsx?$/.test(file2.name)) {
+    showStatus('Only .xlsx or .xls files are allowed.', 'red');
+    return;
+  }
+  showStatus('Processing...', 'blue');
+  try {
+    file1Data = await readExcel(file1);
+    file2Data = await readExcel(file2);
+    if (!file1Data.length || !file2Data.length) throw new Error("One or both files are empty or invalid.");
+    processData();
+    showTables();
+    showStatus('Completed', 'green');
+  } catch (e) {
+    showStatus('Error: ' + e.message, 'red');
+  }
+};
+
+function resetTables() {
+  document.getElementById('results').innerHTML = '';
+  mergedData = [];
+  batteryRows = [];
+  othersRows = [];
+}
+
+function readExcel(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const workbook = XLSX.read(e.target.result, { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+        resolve(json);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function processData() {
+  const customerType = document.getElementById('customerType').value;
+  // Build Part Number -> {Price, Pricing Option} map from File 2
+  const partMap = {};
+  file2Data.forEach(row => {
+    if (row["Part Number"] && row["Pricing Option"] === "Exchange Price") {
+      partMap[row["Part Number"].toString().trim()] = row["Price"];
+    }
+  });
+
+  mergedData = file1Data.map(row => {
+    const partNumber = (row["Part Number"] || "").toString().trim();
+    const partType = (row["Part Type"] || ""); // Use as-is from File 1
+    // Margin %
+    let marginPct;
+    if (partType.toLowerCase().includes("battery")) {
+      marginPct = 0.15;
+    } else {
+      marginPct = marginTable[customerType]["Others"];
+    }
+    const exchangePrice = parseFloat(partMap[partNumber]) || 0;
+    // Spare Part Price without GST = Exchange Price / (1 - Margin %)
+    const sparePartPriceWithoutGST = Math.round(exchangePrice / (1 - marginPct));
+    const gstAmt = Math.round(sparePartPriceWithoutGST * 0.18);
+    const sparePartPriceWithGST = Math.round(sparePartPriceWithoutGST + gstAmt);
+    const serviceCharges = 1100;
+    const totalAmount = Math.round(sparePartPriceWithGST + serviceCharges);
+    return {
+      ...row,
+      "Spare Part Price without GST": sparePartPriceWithoutGST,
+      "Spare Part Price with GST": sparePartPriceWithGST,
+      "Service Charges": Math.round(serviceCharges),
+      "Total Amount": totalAmount
+    };
+  });
+
+  // Use original part type from File 1 for filtering
+  batteryRows = mergedData.filter(r => (r["Part Type"] || "").toLowerCase().includes("battery"));
+  othersRows = mergedData.filter(r => !(r["Part Type"] || "").toLowerCase().includes("battery"));
+}
+
+function renderTable(rows, title) {
+  if (!rows.length) return '';
+  const cols = [
+    "Part Type",
+    // "Part Description", // Removed
+    "iPhone Model",
+    "Spare Part Price without GST",
+    "Spare Part Price with GST",
+    "Service Charges",
+    "Total Amount"
+  ];
+  const colLabels = [
+    "Part Type",
+    // "Part Description", // Removed
+    "iPhone Model",
+    "Spare Part Price without GST",
+    "Spare Part Price with GST",
+    "Service Charges",
+    "Total Amount"
+  ];
+  // Currency formatter for INR
+  const formatINR = val => '₹' + Number(val).toLocaleString('en-IN', {maximumFractionDigits: 0});
+  let thead = `<tr>${colLabels.map(c => `<th>${c}</th>`).join('')}</tr>`;
+  let tbody = rows.map(r =>
+    `<tr>
+      <td>${r["Part Type"]}</td>
+      <!-- <td>${r["Part Description"]}</td> --> <!-- Removed -->
+      <td>${r["iPhone Model"]}</td>
+      <td>${formatINR(r["Spare Part Price without GST"])}</td>
+      <td>${formatINR(r["Spare Part Price with GST"])}</td>
+      <td>${formatINR(r["Service Charges"])}</td>
+      <td>${formatINR(r["Total Amount"])}</td>
+    </tr>`
+  ).join('');
+  return `<h5 class="mt-4">${title}</h5><table class="table table-bordered table-striped">${thead}${tbody}</table>`;
+}
+
+window.downloadTable = function(type) {
+  let rows, filename;
+  if (type === 'battery') {
+    rows = batteryRows;
+    filename = 'Battery-Parts.xlsx';
+  } else if (type === 'others') {
+    rows = othersRows;
+    filename = 'Other-Parts.xlsx';
+  } else {
+    rows = mergedData;
+    filename = 'Full-Merged-Parts.xlsx';
+  }
+  if (!rows.length) return;
+  // Only export the displayed columns, but as numbers (not formatted strings)
+  const exportCols = [
+    "Part Type",
+    "Part Description",
+    "iPhone Model",
+    "Spare Part Price without GST",
+    "Spare Part Price with GST",
+    "Service Charges",
+    "Total Amount"
+  ];
+  const ws = XLSX.utils.json_to_sheet(rows.map(r => {
+    const out = {};
+    exportCols.forEach(c => out[c] = r[c]);
+    return out;
+  }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Parts");
+  XLSX.writeFile(wb, filename);
+};
+
+function showTables() {
+  let html = '';
+
+  // --- PAGE 1: Display ---
+  html += `<div class="print-page" id="page-display">`;
+  const displayRows = mergedData.filter(r =>
+    (r["Part Type"] || "").toLowerCase().includes("display")
+  );
+  if (displayRows.length) {
+    html += renderTable(displayRows, "iPhone - Display Price");
+  }
+  html += `</div>`;
+
+  // --- PAGE 2: Rear System, Mid System, Back Glass ---
+  html += `<div class="print-page" id="page-rear-mid-back">`;
+  // Rear System
+  const rearRows = mergedData.filter(r =>
+    (r["Part Type"] || "").toLowerCase().includes("rear system")
+  );
+  if (rearRows.length) {
+    html += renderTable(rearRows, "iPhone - Rear System Price");
+  }
+  // Mid System
+  const midRows = mergedData.filter(r =>
+    (r["Part Type"] || "").toLowerCase().includes("mid system")
+  );
+  if (midRows.length) {
+    html += renderTable(midRows, "iPhone - Mid System Price");
+  }
+  // Back Glass
+  const backGlassRows = mergedData.filter(r =>
+    (r["Part Type"] || "").toLowerCase().includes("back glass")
+  );
+  if (backGlassRows.length) {
+    html += renderTable(backGlassRows, "iPhone - Back Glass Price");
+  }
+  html += `</div>`;
+
+  // --- PAGE 3: Camera ---
+  html += `<div class="print-page" id="page-camera">`;
+  const cameraRows = mergedData.filter(r =>
+    (r["Part Type"] || "").toLowerCase().includes("camera")
+  );
+  if (cameraRows.length) {
+    html += renderTable(cameraRows, "iPhone - Camera Price");
+  }
+  html += `</div>`;
+
+  // --- PAGE 4: WUR (Whole Unit Replacement) ---
+  html += `<div class="print-page" id="page-wur">`;
+  // FIX: Match both "whole unit" and "wur" in Part Type
+  const wurRows = mergedData.filter(r => {
+    const pt = (r["Part Type"] || "").toLowerCase();
+    return pt.includes("whole unit") || pt.includes("wur");
+  });
+  if (wurRows.length) {
+    html += renderTable(wurRows, "iPhone - Whole Unit Replacement Price");
+  }
+  html += `</div>`;
+
+  // --- PAGE 5: Battery ---
+  html += `<div class="print-page" id="page-battery">`;
+  const batteryRowsPrint = mergedData.filter(r =>
+    (r["Part Type"] || "").toLowerCase().includes("battery")
+  );
+  if (batteryRowsPrint.length) {
+    html += renderTable(batteryRowsPrint, "iPhone - Battery Price");
+  }
+  html += `</div>`;
+
+  // Download buttons (not printed)
+  if (batteryRows.length) {
+    html += `<button class="btn btn-success download-btn d-print-none" onclick="downloadTable('battery')">Download Battery Parts</button>`;
+  }
+  if (othersRows.length) {
+    html += `<button class="btn btn-success download-btn d-print-none" onclick="downloadTable('others')">Download Other Parts</button>`;
+  }
+  if (mergedData.length) {
+    html += `<button class="btn btn-primary d-print-none" onclick="downloadTable('all')">Download Full Merged File</button>`;
+  }
+
+  document.getElementById('results').innerHTML = `<div class="table-responsive">${html}</div>`;
+}
+
+// Make showTables globally accessible
+window.showTables = showTables;
+</script>
+</body>
+</html>
+
+<!-- Print Button (optional) -->
+<button class="btn btn-outline-secondary d-print-none" style="position:fixed;top:16px;right:16px;z-index:1000;" onclick="window.print()">Print</button>
+
+<script>
+// Set revision number and date to current date in format 2025/MM/DD/0001
+const today = new Date();
+const yyyy = today.getFullYear();
+const mm = String(today.getMonth() + 1).padStart(2, '0');
+const dd = String(today.getDate()).padStart(2, '0');
+document.getElementById('revision-no').textContent = `Revision No. ${yyyy}/${mm}/${dd}/0001`;
+document.getElementById('rev-date').textContent = `${yyyy}/${mm}/${dd}`;
+</script>
+<style>
+@media print {
+  body {
+    background: #fff !important;
+  }
+  #print-header {
+    display: flex !important;
+    border-bottom: 2px solid #0070c0 !important;
+    margin-bottom: 16px !important;
+    padding-bottom: 10px !important;
+  }
+  .d-print-none, .download-btn, h2.mb-4 {
+    display: none !important;
+  }
+  .container {
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+  .print-page {
+    page-break-after: always;
+    page-break-inside: avoid;
+  }
+  .print-page:last-child {
+    page-break-after: auto;
+  }
+}
+</style>
